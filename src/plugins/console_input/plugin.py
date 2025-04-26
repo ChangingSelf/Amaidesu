@@ -4,7 +4,12 @@ import os
 import sys
 import time
 from typing import Dict, Any, Optional, List
+# --- Amaidesu Core Imports ---
+from core.plugin_manager import BasePlugin
+from src.core.amaidesu_core import AmaidesuCore
+from maim_message import MessageBase, BaseMessageInfo, UserInfo, GroupInfo, Seg, FormatInfo
 
+logger = logging.getLogger(__name__)
 # --- Dependency Check & TOML ---
 try:
     import tomllib
@@ -12,15 +17,10 @@ except ModuleNotFoundError:
     try:
         import toml as tomllib
     except ImportError:
-        print("依赖缺失: 请运行 'pip install toml' 来加载 Console Input 插件配置。", file=sys.stderr)
+        logger.error("依赖缺失: 请运行 'pip install toml' 来加载 Console Input 插件配置。")
         tomllib = None
 
-# --- Amaidesu Core Imports ---
-from core.plugin_manager import BasePlugin
-from src.core.amaidesu_core import AmaidesuCore
-from maim_message import MessageBase, BaseMessageInfo, UserInfo, GroupInfo, Seg, FormatInfo
 
-logger = logging.getLogger(__name__)
 
 # --- Plugin Configuration Loading ---
 _PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))

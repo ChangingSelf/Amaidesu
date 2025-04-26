@@ -8,7 +8,12 @@ import socket
 import tempfile
 from typing import Dict, Any, Optional
 import numpy as np  # 确保导入 numpy
+# --- Amaidesu Core Imports ---
+from core.plugin_manager import BasePlugin
+from core.amaidesu_core import AmaidesuCore
+from maim_message import MessageBase  # Import MessageBase for type hint
 
+logger = logging.getLogger(__name__)
 # --- Dependencies Check (Inform User) ---
 # Try importing required libraries and inform the user if they are missing.
 # Actual error will be caught later if import fails during use.
@@ -16,13 +21,13 @@ dependencies_ok = True
 try:
     import edge_tts
 except ImportError:
-    print("依赖缺失: 请运行 'pip install edge-tts' 来使用 TTS 功能。", file=sys.stderr)
+    logger.error("依赖缺失: 请运行 'pip install edge-tts' 来使用 TTS 功能。")
     dependencies_ok = False
 try:
     import sounddevice as sd
     import soundfile as sf
 except ImportError:
-    print("依赖缺失: 请运行 'pip install sounddevice soundfile' 来使用音频播放功能。", file=sys.stderr)
+    logger.error("依赖缺失: 请运行 'pip install sounddevice soundfile' 来使用音频播放功能。")
     dependencies_ok = False
 # try:
 #     from openai import AsyncOpenAI, APIConnectionError, RateLimitError, APIStatusError
@@ -36,16 +41,11 @@ except ModuleNotFoundError:
     try:
         import toml as tomllib
     except ImportError:
-        print("依赖缺失: 请运行 'pip install toml' 来加载 TTS 插件配置。", file=sys.stderr)
+        logger.error("依赖缺失: 请运行 'pip install toml' 来加载 TTS 插件配置。")
         tomllib = None
         dependencies_ok = False
 
-# --- Amaidesu Core Imports ---
-from core.plugin_manager import BasePlugin
-from core.amaidesu_core import AmaidesuCore
-from maim_message import MessageBase  # Import MessageBase for type hint
 
-logger = logging.getLogger(__name__)
 
 # --- Plugin Configuration Loading ---
 _PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))

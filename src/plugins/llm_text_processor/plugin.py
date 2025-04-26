@@ -3,11 +3,15 @@ import os
 import sys
 from typing import Dict, Any, Optional
 
+# --- Amaidesu Core Imports ---
+from core.plugin_manager import BasePlugin
+from src.core.amaidesu_core import AmaidesuCore
+from src.utils.logger import logger
 # --- Dependency Check & TOML ---
 try:
     from openai import AsyncOpenAI, OpenAIError, APIConnectionError, RateLimitError, APIStatusError
 except ImportError:
-    print("依赖缺失: 请运行 'pip install openai' 来使用 LLM 文本处理器插件。", file=sys.stderr)
+    logger.error("依赖缺失: 请运行 'pip install openai' 来使用 LLM 文本处理器插件。")
     AsyncOpenAI = None  # type: ignore
     OpenAIError = APIConnectionError = RateLimitError = APIStatusError = Exception  # type: ignore
 
@@ -17,13 +21,8 @@ except ModuleNotFoundError:
     try:
         import toml as tomllib
     except ImportError:
-        print("依赖缺失: 请运行 'pip install toml' 来加载 LLM 文本处理器插件配置。", file=sys.stderr)
+        logger.error("依赖缺失: 请运行 'pip install toml' 来加载 LLM 文本处理器插件配置。")
         tomllib = None
-
-# --- Amaidesu Core Imports ---
-from core.plugin_manager import BasePlugin
-from src.core.amaidesu_core import AmaidesuCore
-from src.utils.logger import logger
 
 # --- Plugin Configuration Loading ---
 _PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))

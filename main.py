@@ -4,17 +4,6 @@ import sys
 import os
 import argparse  # 导入 argparse
 import shutil # <<<<<<<<<<<<<<<<<<<< Added import
-
-# 尝试导入 tomllib (Python 3.11+), 否则使用 toml
-try:
-    import tomllib
-except ModuleNotFoundError:
-    try:
-        import toml as tomllib  # type: ignore
-    except ModuleNotFoundError:
-        print("错误：需要安装 TOML 解析库。请运行 'pip install toml'", file=sys.stderr)
-        sys.exit(1)
-
 # 从 src 目录导入核心类和插件管理器
 from src.core.amaidesu_core import AmaidesuCore
 from src.core.plugin_manager import PluginManager
@@ -22,6 +11,17 @@ from src.utils.logger import logger
 
 # 获取 main.py 文件所在的目录
 _BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+# 尝试导入 tomllib (Python 3.11+), 否则使用 toml
+try:
+    import tomllib
+except ModuleNotFoundError:
+    try:
+        import toml as tomllib  # type: ignore
+    except ModuleNotFoundError:
+        logger.error("错误：需要安装 TOML 解析库。请运行 'pip install toml'")
+        sys.exit(1)
+
+
 
 
 def load_config(config_filename: str = "config.toml") -> dict:

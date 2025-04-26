@@ -60,13 +60,9 @@ async def handle_websocket(request: web.Request):
 
                     message_base = MessageBase.from_dict(data)
                     if message_base.message_segment.type == "text":
-                        print(
-                            f"{COLOR_GREEN}{message_base.message_info.platform}{COLOR_RESET} > {message_base.message_segment.data}"
-                        )
+                        logger.info(f"{message_base.message_info.platform} > {message_base.message_segment.data}")
                     else:
-                        print(
-                            f"{COLOR_GREEN}{message_base.message_info.platform}{COLOR_RESET} > [{message_base.message_segment.type}类型的消息]"
-                        )
+                        logger.info(f"{message_base.message_info.platform} > [{message_base.message_segment.type}类型的消息]")
 
                 except Exception as e:
                     logger.error(f"处理接收到的消息时出错: {e}", exc_info=True)

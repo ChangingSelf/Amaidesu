@@ -16,22 +16,27 @@ from datetime import datetime
 from time import mktime
 from urllib.parse import urlencode, quote
 from typing import Dict, Any, Optional, List, Tuple
+# --- Amaidesu Core Imports ---
+from core.plugin_manager import BasePlugin
+from core.amaidesu_core import AmaidesuCore
+from maim_message import MessageBase, BaseMessageInfo, UserInfo, GroupInfo, Seg, FormatInfo
 
+logger = logging.getLogger(__name__)
 # --- Dependencies Check & TOML ---
 try:
     import torch
 except ImportError:
-    print("依赖缺失: 请运行 'pip install torch' 来使用 VAD 功能。", file=sys.stderr)
+    logger.error("依赖缺失: 请运行 'pip install torch' 来使用 VAD 功能。")
     torch = None
 try:
     import sounddevice as sd
 except ImportError:
-    print("依赖缺失: 请运行 'pip install sounddevice' 来使用音频输入。", file=sys.stderr)
+    logger.error("依赖缺失: 请运行 'pip install sounddevice' 来使用音频输入。")
     sd = None
 try:
     import aiohttp
 except ImportError:
-    print("依赖缺失: 请运行 'pip install aiohttp' 来与讯飞 API 通信。", file=sys.stderr)
+    logger.error("依赖缺失: 请运行 'pip install aiohttp' 来与讯飞 API 通信。")
     aiohttp = None
 try:
     import tomllib
@@ -39,15 +44,10 @@ except ModuleNotFoundError:
     try:
         import toml as tomllib
     except ImportError:
-        print("依赖缺失: 请运行 'pip install toml' 来加载 STT 插件配置。", file=sys.stderr)
+        logger.error("依赖缺失: 请运行 'pip install toml' 来加载 STT 插件配置。")
         tomllib = None
 
-# --- Amaidesu Core Imports ---
-from core.plugin_manager import BasePlugin
-from core.amaidesu_core import AmaidesuCore
-from maim_message import MessageBase, BaseMessageInfo, UserInfo, GroupInfo, Seg, FormatInfo
 
-logger = logging.getLogger(__name__)
 
 # --- Plugin Configuration Loading ---
 _PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -709,11 +709,11 @@ class STTPlugin(BasePlugin):
     # --- Iflytek Receiver (Modified in previous step) ---
     async def _iflytek_receiver(self, ws: aiohttp.ClientWebSocketResponse):
         """
-        Receives messages from iFlytek WebSocket, processes results,
+        Receives messages from iFlytek WebSocket, processes results (handling dynamic correction using pgs/rg),
         and sends the final text back to Core via send_to_maicore.
         """
-        full_text = ""
-        utterance_failed = False # Track if the utterance had errors
+        result_segments: List[Optional[str]] = [] # Stores segment from each message sn
+        utterance_failed = False
         self.logger.debug("讯飞接收器任务启动。")
         try:
             async for msg in ws:
@@ -724,6 +724,8 @@ class STTPlugin(BasePlugin):
                 if msg.type == aiohttp.WSMsgType.TEXT:
                     try:
                         resp = json.loads(msg.data)
+                        self.logger.debug(f"Received from Iflytek: {resp}")
+
                         if resp.get("code", -1) != 0:
                             err_msg = f"讯飞 API 错误: Code={resp.get('code')}, Message={resp.get('message')}"
                             self.logger.error(err_msg)
@@ -733,29 +735,63 @@ class STTPlugin(BasePlugin):
                         data = resp.get("data", {})
                         status = data.get("status", -1)
                         result = data.get("result", {})
-                        text_segment = ""
-                        # Extract text segments correctly
+                        current_segment = ""
+                        sn = result.get("sn", 0) # Sequence number (1-based)
+                        pgs = result.get("pgs") # 'apd' or 'rpl'
+                        rg = result.get("rg") # List [start_sn, end_sn]
+
+                        # --- Extract current text segment ---
                         if "ws" in result:
-                            for w in result["ws"]:
-                                for cw in w.get("cw", []):
-                                    text_segment += cw.get("w", "")
+                            for i in result["ws"]:
+                                for w in i.get("cw", []):
+                                    current_segment += w.get("w", "")
 
-                        if text_segment:
-                            full_text += text_segment
-                            # self.logger.debug(f"Intermediate text: '{text_segment}' (Total: '{full_text}')") # Optional: verbose
+                        # --- Store current segment in history ---
+                        if sn > 0:
+                             # Ensure list is long enough (use None as placeholder)
+                            if sn > len(result_segments):
+                                result_segments.extend([None] * (sn - len(result_segments)))
+                            # Store the segment at the sn-1 index
+                            result_segments[sn - 1] = current_segment
+                            self.logger.debug(f"Stored segment '{current_segment}' at sn={sn}")
+                        else:
+                             self.logger.warning(f"Received message with invalid or missing sn: {sn}")
+                             # Decide how to handle this? Append maybe? For now, log and potentially skip.
+                             # If it happens often, might need a fallback.
 
+                        # --- Handle Replacement based on pgs and rg ---
+                        if pgs == 'rpl' and rg and len(rg) == 2 and sn > 0:
+                            start_sn, end_sn = rg[0], rg[1]
+                            self.logger.debug(f"Processing replacement (rpl): Replacing range [{start_sn}, {end_sn}] with segment from sn={sn}")
+                            # Iterate through the specified range (1-based)
+                            for i in range(start_sn, end_sn + 1):
+                                # If the index i corresponds to an older message (not the current one sn)
+                                # and it's within the bounds of our history list, mark it as None (deleted).
+                                if i != sn and (i - 1) < len(result_segments):
+                                     if result_segments[i - 1] is not None:
+                                          self.logger.debug(f"Nullifying segment for replaced sn={i}")
+                                          result_segments[i - 1] = None
+                        elif pgs == 'apd':
+                             self.logger.debug(f"Processing append (apd) for sn={sn}")
+                             # Append logic is implicit in storing the segment above
+                        elif pgs:
+                             self.logger.warning(f"Unknown pgs status: '{pgs}'")
+
+                        # --- Handle Final Frame ---
                         if status == STATUS_LAST_FRAME:
-                            self.logger.info(f"讯飞收到最终结果: '{full_text}'")
-                            if full_text.strip() and not utterance_failed: # Only send non-empty, non-failed results
+                            # Reconstruct the final text from the segments list
+                            final_text = "".join(segment for segment in result_segments if segment is not None)
+                            self.logger.info(f"讯飞收到最终结果 (动态修正后): '{final_text}'")
+                            if final_text.strip() and not utterance_failed: # Only send non-empty, non-failed results
                                 try:
                                     # --- 修正服务调用 (Re-inserted from old logic) ---
-                                    final_text_to_send = full_text.strip()
+                                    final_text_to_send = final_text.strip()
                                     if self.enable_correction:
                                         correction_service = self.core.get_service("stt_correction")
                                         if correction_service:
                                             self.logger.debug("找到 stt_correction 服务，尝试修正文本...")
                                             try:
-                                                # Use the stripped full_text as input
+                                                # Use the stripped final_text as input
                                                 corrected = await correction_service.correct_text(final_text_to_send)
                                                 if corrected and isinstance(corrected, str):
                                                     self.logger.info(f"修正后 STT 结果: '{corrected}'")
@@ -781,7 +817,7 @@ class STTPlugin(BasePlugin):
                                 self.logger.warning("Utterance failed due to API error, not sending result.")
                             else:
                                  self.logger.info("最终识别结果为空，不发送。")
-                            # full_text = "" # Reset unnecessary as connection will close
+                            # final_text = "" # Reset unnecessary as connection will close
                             break # End receiving loop for this utterance
 
                     except json.JSONDecodeError:
@@ -799,8 +835,10 @@ class STTPlugin(BasePlugin):
                     break
                 elif msg.type == aiohttp.WSMsgType.CLOSED:
                     self.logger.warning(f"讯飞 WebSocket 连接被关闭: Code={ws.close_code}")
-                    if not utterance_failed and full_text.strip():
-                         self.logger.warning(f"在最终结果前连接关闭。最后累积文本: '{full_text.strip()}' (未发送)")
+                    # Reconstruct final text even if closed prematurely to log potentially lost data
+                    final_text_on_close = "".join(segment for segment in result_segments if segment is not None)
+                    if not utterance_failed and final_text_on_close.strip():
+                         self.logger.warning(f"在最终结果前连接关闭。最后累积文本: '{final_text_on_close.strip()}' (未发送)")
                          # Decide policy: maybe send partial? Currently not.
                     break
         except asyncio.CancelledError:
@@ -808,7 +846,6 @@ class STTPlugin(BasePlugin):
         except Exception as e:
             self.logger.exception(f"讯飞接收器任务异常: {e}")
         finally:
-            # Remove future logic
             self.logger.debug(f"讯飞接收器任务结束 (Utterance failed: {utterance_failed})。")
 
 
